@@ -9,16 +9,12 @@ def game_stats(games,df):
     '''
     adds season to date stats from rolling through dataframe
     '''
-
-    games['date'] = pd.to_datetime(games['date'])
-
-    print("GAMES DATE:",games['date']  )
     # make sure we have the same games in the same order in both df's
     games = games.sort_values(by=['date','game_id']).reset_index(drop=True)
     df = df.sort_values(by=['date','game_id']).reset_index(drop=True)
     #assert all(games['game_id']==df['game_id'])
     
-    df['home_team_season'] = df['home_team_abbr'] + '_' + df['season'].astype('str')
+    df['home_team_season'] = df['home_team_abbr_x'] + '_' + df['season'].astype('str')
     df['away_team_season'] = df['away_team_abbr'] + '_' + df['season'].astype('str')
         
     # normalize spread for each team
@@ -230,78 +226,123 @@ def add_season_rolling(stat_df, df, cols, team, name):
     team: binary whether this is a team stat (false if pitcher stat)
     name: the string appended to each feature name (like 'batting')
     '''
-    stat_df['season'] = stat_df.game_id.str[0:2]
-    group_keys = ['team', 'season']
+    stat_df['season'] = stat_df.game_id.str[3:7]
     for s in cols:
-        stat_df[f'{s}_mean'] = stat_df.groupby(group_keys)[s].transform(lambda x: x.rolling(200, min_periods=1).mean())
-        stat_df[f'{s}_std'] = stat_df.groupby(group_keys)[s].transform(lambda x: x.rolling(200, min_periods=1).std())
-        stat_df[f'{s}_skew'] = stat_df.groupby(group_keys)[s].transform(lambda x: x.rolling(200, min_periods=1).skew())
-
-    # Prepare columns for merging
-    stats_to_merge = [f'{s}_{stat}' for s in cols for stat in ['mean', 'std', 'skew']] + ['game_id']
-    for loc in ['home', 'away']:
-        merged_cols = {f'{s}_{stat}': f'{s}_{stat}_{loc}_{name}' for s in cols for stat in ['mean', 'std', 'skew']}
-        condition = stat_df['is_home_team'] == (loc == 'home')
-        b = stat_df.loc[condition, stats_to_merge].groupby('game_id').first().reset_index()
-        df = df.merge(b, on='game_id', how='left')
-        df.rename(columns=merged_cols, inplace=True)
-
-        # Debugging step: Print columns to verify
-        print(df.columns)
-
-    # Shift stats to make them pre-game stats
-    for col in [f'{s}_{stat}_{loc}_{name}' for s in cols for stat in ['mean', 'std', 'skew'] for loc in ['home', 'away']]:
-        if col in df.columns:
-            group_key = 'home_team_abbr' if team else f'{loc}_pitcher'
-            df[col] = df.groupby(group_key)[col].shift()
+        if team:
+            stat_df[s+'_mean'] = stat_df.groupby(['team', 'season'])[s].transform(lambda x:x.rolling(200, min_periods=1).mean())
+            stat_df[s+'_stdev'] = stat_df.groupby(['team', 'season'])[s].transform(lambda x:x.rolling(200, min_periods=1).std())
+            stat_df[s+'_skew'] = stat_df.groupby(['team', 'season'])[s].transform(lambda x:x.rolling(200, min_periods=1).skew())
         else:
-            print(f"Column {col} not found in DataFrame")
-
-    # Assert no rows lost during merging
-    assert len(df) == len(df), "DataFrame length changed after merging."
-
-    # Create differential stats
+            stat_df[s+'_mean'] = stat_df.groupby(['name', 'season'])[s].transform(lambda x:x.rolling(200, min_periods=1).mean())
+            stat_df[s+'_stdev'] = stat_df.groupby(['name', 'season'])[s].transform(lambda x:x.rolling(200, min_periods=1).std())
+            stat_df[s+'_skew'] = stat_df.groupby(['name', 'season'])[s].transform(lambda x:x.rolling(200, min_periods=1).skew())
+                
+    stat_cols = []
     for s in cols:
-        home_col = f'{s}_mean_home_{name}'
-        away_col = f'{s}_mean_away_{name}'
-        if home_col in df.columns and away_col in df.columns:
-            df[f'{name}_{s}_diff'] = df[home_col] - df[away_col]
+        stat_cols.append(s + '_mean')
+        stat_cols.append(s + '_stdev')
+        stat_cols.append(s + '_skew')
+    stat_cols.append('game_id')
+
+    df_len = len(df)
+    b = stat_df[stat_cols][stat_df['is_home_team']==True].groupby('game_id').first().reset_index()
+    df = pd.merge(left=df, right=b,on='game_id', how='left')
+
+    for s in stat_cols:
+        if s == 'game_id':continue
+        df['home_'+name+'_'+s] = df[s]
+        df.drop(columns=s, inplace=True)
+        #shift the stats to the next game, in order to convert to pre-game stats
+        if team:
+            df['home_'+name+'_'+s] = df.groupby('home_team_abbr_x')['home_'+name+'_'+s].shift()
         else:
-            print(f"One or both columns {home_col} or {away_col} not found for differential stats calculation")
+            df['home_'+name+'_'+s] = df.groupby('home_pitcher')['home_'+name+'_'+s].shift()
+
+    b = stat_df[stat_cols][stat_df['is_home_team']==False].groupby('game_id').first().reset_index()
+    df = pd.merge(left=df, right=b,on='game_id', how='left')
+
+    for s in stat_cols:
+        if s == 'game_id':continue
+        df['away_'+name+'_'+s] = df[s]
+        df.drop(columns=s, inplace=True)
+        #shift the stats to the next game, in order to convert to pre-game stats
+        if team:
+            df['away_'+name+'_'+s] = df.groupby('away_team_abbr')['away_'+name+'_'+s].shift()
+        else:
+            df['away_'+name+'_'+s] = df.groupby('away_pitcher')['away_'+name+'_'+s].shift()
+
+    assert df_len == len(df)
+
+    # create diff stats
+    for s in cols:
+        if s == 'game_id':continue
+        df[name+'_'+s+'_diff']= df['home_'+name+'_'+s+'_mean']-df['away_'+name+'_'+s+'_mean']
 
     return df
 
-def add_10RA_rolling(stat_df, original_df, cols, team):
+def add_10RA_rolling(stat_df, df, cols, team, name):
+    '''
+    add 10 period rolling statistical features to target dataframe
+    
+    params:
+    ------
+    stat_df: the dataframe with the game stats (like from batting.csv
+    df: the target dataframe we're going to return with new columns
+    cols: list of columns in stat_df containing the stats of interest
+    team: binary whether this is a team stat (false if pitcher stat)
+    name: the string appended to each feature name (like 'batting')
+    '''
+    #create stat
+    for s in cols:
+        if team:
+            print("AAA")
+            stat_df[s+'_10RA'] = stat_df.groupby('team')[s].transform(lambda x: x.rolling(10, min_periods=1).mean())
 
-    try:
-        # Create a copy to avoid modifying the original DataFrame during calculations
-        result_df = stat_df.copy()
-        print(result_df['team'])
-        # Determine the grouping column based on the 'team' flag
-        group_col = 'team' if team else 'name'
+        else:
+            stat_df[s+'_10RA'] = stat_df.groupby('name')[s].transform(lambda x:x.rolling(10, min_periods=1).mean())
+        
+    # add stat to target dataframe
+    stat_cols = [x + '_10RA' for x in cols]
+    stat_cols.append('game_id')
 
-        # Apply the rolling mean computation to specified columns and create new column names
-        for s in cols:
-            new_col_name = s + '_10RA'
-            result_df[new_col_name] = result_df.groupby(group_col)[s].transform(
-                lambda x: x.rolling(10, min_periods=1).mean()
-            )
+    #home team first
+    df_len = len(df)
+    b = stat_df[stat_cols][stat_df['is_home_team']==True].groupby('game_id').first().reset_index()
+    
+    df = pd.merge(left=df, right=b,on='game_id', how='left')
+    print(df)
+    for s in stat_cols:
+        if s == 'game_id':continue
+        df['home_'+name+'_'+s] = df[s]
+        df.drop(columns=s, inplace=True)
+        #shift the stats to the next game, in order to convert to pre-game stats
+        if team:
+            df['home_'+name+'_'+s] = df.groupby('home_team_abbr')['home_'+name+'_'+s].shift()
+        else:
+            df['home_'+name+'_'+s] = df.groupby('home_pitcher')['home_'+name+'_'+s].shift()
+    #now away team
+    b = stat_df[stat_cols][stat_df['is_home_team']==False].groupby('game_id').first().reset_index()
+    df = pd.merge(left=df, right=b,on='game_id', how='left')
 
-        # After creating new columns in result_df, merge these back into the original DataFrame
-        # Only select the new rolling average columns and the key for merging (group_col)
-        cols_to_merge = [col for col in result_df.columns if '_10RA' in col]
-        cols_to_merge.append('game_id')
-        merge_df = result_df[cols_to_merge].drop_duplicates()
+    for s in stat_cols:
+        if s == 'game_id':continue
+        df['away_'+name+'_'+s] = df[s]
+        df.drop(columns=s, inplace=True)
+        #shift the stats to the next game, in order to convert to pre-game stats
+        if team:
+            df['away_'+name+'_'+s] = df.groupby('away_team_abbr')['away_'+name+'_'+s].shift()
+        else:
+            df['away_'+name+'_'+s] = df.groupby('away_pitcher')['away_'+name+'_'+s].shift()
+    
+    assert df_len == len(df)
+    
+    # create diff stats
+    for s in stat_cols:
+        if s == 'game_id':continue
+        df[name+'_'+s+'_diff']= df['home_'+name+'_'+s]-df['away_'+name+'_'+s]
+    
+    return df  
 
-        # Merge this DataFrame back into the original DataFrame on 'game_id'
-        original_df = original_df.merge(merge_df, on='game_id', how='left')
-     
-    except KeyError as e:
-        print(f"KeyError: {e} - Check if the grouping columns and target columns exist.")
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-
-    return original_df
        
 def get_stats_from_dist(dist):
     d = np.array(dist).astype('float')
@@ -377,4 +418,3 @@ def start_times(x):
         return np.nan
     else:
         return re.findall('(\d+\:\d+)', x)[0]
-
