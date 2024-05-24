@@ -197,8 +197,7 @@ def get_game_df():
     '''
     games = get_games()
     df = games[['game_id','home_team_abbr','away_team_abbr','date','is_night_game']]
-    df['home_team_win'] = games.home_team_runs.astype('int')>games.away_team_runs
-    
+    df['home_team_win'] = games.home_team_runs.astype('int')>games.away_team_run
     pitchers = get_pitchers()
     home_pitchers = pitchers[['name','game_id']].where((pitchers.is_home_team)&(pitchers.is_starting_pitcher)).dropna()
     home_pitchers['home_pitcher'] = home_pitchers['name']
@@ -213,6 +212,30 @@ def get_game_df():
     df = df.sort_values(by='date').reset_index(drop=True)
     return df
 
+def get_game_df_scores():
+    '''
+    gets base dataframe of historical data that matches data 
+    that can be scraped for current day. 
+    
+    Plus target column: 'home_team_win'
+    '''
+    games = get_games()
+    df = games[['game_id','home_team_abbr','away_team_abbr','date','is_night_game']]
+
+    df['total_runs'] = games.home_team_runs.astype('int')+games.away_team_runs
+    pitchers = get_pitchers()
+    home_pitchers = pitchers[['name','game_id']].where((pitchers.is_home_team)&(pitchers.is_starting_pitcher)).dropna()
+    home_pitchers['home_pitcher'] = home_pitchers['name']
+    home_pitchers = home_pitchers.groupby('game_id')['home_pitcher'].first()
+    df = pd.merge(left=df, right=home_pitchers, on='game_id', how='left')
+    
+    away_pitchers = pitchers[['name','game_id']].where((~pitchers.is_home_team)&(pitchers.is_starting_pitcher)).dropna()
+    away_pitchers['away_pitcher'] = away_pitchers['name']
+    away_pitchers = away_pitchers.groupby('game_id')['away_pitcher'].first()
+    df = pd.merge(left=df, right=away_pitchers, on='game_id', how='left')
+    
+    df = df.sort_values(by='date').reset_index(drop=True)
+    return df
 
 def add_season_rolling(stat_df, df, cols, team, name):
     '''
