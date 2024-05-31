@@ -14,7 +14,7 @@ def game_stats(games,df):
     df = df.sort_values(by=['date','game_id']).reset_index(drop=True)
     #assert all(games['game_id']==df['game_id'])
     
-    df['home_team_season'] = df['home_team_abbr_x'] + '_' + df['season'].astype('str')
+    df['home_team_season'] = df['home_team_abbr'] + '_' + df['season'].astype('str')
     df['away_team_season'] = df['away_team_abbr'] + '_' + df['season'].astype('str')
         
     # normalize spread for each team
@@ -197,7 +197,7 @@ def get_game_df():
     '''
     games = get_games()
     df = games[['game_id','home_team_abbr','away_team_abbr','date','is_night_game']]
-    df['home_team_win'] = games.home_team_runs.astype('int')>games.away_team_run
+    df['home_team_win'] = games.home_team_runs.astype('int')>games.away_team_runs
     pitchers = get_pitchers()
     home_pitchers = pitchers[['name','game_id']].where((pitchers.is_home_team)&(pitchers.is_starting_pitcher)).dropna()
     home_pitchers['home_pitcher'] = home_pitchers['name']
@@ -277,7 +277,7 @@ def add_season_rolling(stat_df, df, cols, team, name):
         df.drop(columns=s, inplace=True)
         #shift the stats to the next game, in order to convert to pre-game stats
         if team:
-            df['home_'+name+'_'+s] = df.groupby('home_team_abbr_x')['home_'+name+'_'+s].shift()
+            df['home_'+name+'_'+s] = df.groupby('home_team_abbr')['home_'+name+'_'+s].shift()
         else:
             df['home_'+name+'_'+s] = df.groupby('home_pitcher')['home_'+name+'_'+s].shift()
 
