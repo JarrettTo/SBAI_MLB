@@ -117,7 +117,7 @@ def assemble_json(predictions, proba, score_predictions, test_df):
     json_predictions = []
     for index, row in test_df.iterrows():
         prediction = {
-            "id": test_df['game_id'],
+            "id": row['game_id'],
             "home_team": row['home_team_abbr'],
             "away_team": row['away_team_abbr'],
             "ml_pred": selected_abbr[index],
